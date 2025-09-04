@@ -25,3 +25,30 @@ async def create_user(user: User) -> User:
     conn.commit()
     conn.close()
     return user
+
+@router.put("/users/{user_id}", response_model=User, status_code=status.HTTP_200_OK)
+async def update_user(user_id: int, user: User) -> User:
+    conn = psycopg2.connect(CONNINFO)
+    cur = conn.cursor()
+    cur.execute("UPDATE test_users SET name = %s, email = %s WHERE id = %s", (user.name, user.email, user_id))
+    conn.commit()
+    conn.close()
+    return user
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(user_id: int) -> None:
+    conn = psycopg2.connect(CONNINFO)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM test_users WHERE id = %s", (user_id,))
+    conn.commit()
+    conn.close()
+    return None
+
+@router.patch("/users/{user_id}", response_model=User, status_code=status.HTTP_200_OK)
+async def patch_user(user_id: int, user: User) -> User:
+    conn = psycopg2.connect(CONNINFO)
+    cur = conn.cursor()
+    cur.execute("UPDATE test_users SET name = %s, email = %s WHERE id = %s", (user.name, user.email, user_id))
+    conn.commit()
+    conn.close()
+    return user
