@@ -2,20 +2,18 @@
 Authentication API endpoints for user registration, login, and session management.
 """
 
-import os
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from jose import JWTError
-import psycopg2
+from app.core.database import get_db_connection
 
 from app.schemas.auth import RegisterInput, LoginInput, Token
 from app.schemas.users import User
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
 
-CONNINFO = os.getenv("DATABASE_URL", "postgresql://merislihic@localhost:5432/learning_db")
 router = APIRouter()
 COOKIE_NAME = "access_token"
 
-def get_current_user(request: Request) -> User:
+async def get_current_user(request: Request) -> User:
     """Get current authenticated user from JWT token."""
     # Get token from cookie or Authorization header
     token = request.cookies.get(COOKIE_NAME)
@@ -37,72 +35,63 @@ def get_current_user(request: Request) -> User:
         raise HTTPException(status_code=401, detail="Invalid token")
 
     # Get user from database
-    conn = psycopg2.connect(CONNINFO)
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT id, name, email FROM test_users WHERE id = %s", (user_id,))
-        row = cur.fetchone()
-        if not row:
-            raise HTTPException(status_code=401, detail="User not found")
-        return User(id=row[0], name=row[1], email=row[2])
-    finally:
-        conn.close()
+    async with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, name, email FROM test_users WHERE id = %s", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(status_code=401, detail="User not found")
+            return User(id=row[0], name=row[1], email=row[2])
 
 @router.post("/auth/register", response_model=User, status_code=201)
-def register(body: RegisterInput) -> User:
+async def register(body: RegisterInput) -> User:
     """Register a new user account."""
-    conn = psycopg2.connect(CONNINFO)
-    try:
-        cur = conn.cursor()
-        
-        # Check if email already exists
-        cur.execute("SELECT 1 FROM test_users WHERE email = %s", (body.email,))
-        if cur.fetchone():
-            raise HTTPException(status_code=409, detail="Email already registered")
-        
-        # Create user
-        hashed_pw = hash_password(body.password)
-        cur.execute(
-            "INSERT INTO test_users (name, email, hashed_password) VALUES (%s, %s, %s) RETURNING id",
-            (body.name, body.email, hashed_pw),
-        )
-        result = cur.fetchone()
-        if not result:
-            raise HTTPException(status_code=500, detail="Failed to create user")
-        user_id = result[0]
-        conn.commit()
-        return User(id=user_id, name=body.name, email=body.email)
-    finally:
-        conn.close()
+    async with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            
+            # Check if email already exists
+            cur.execute("SELECT 1 FROM test_users WHERE email = %s", (body.email,))
+            if cur.fetchone():
+                raise HTTPException(status_code=409, detail="Email already registered")
+            
+            # Create user
+            hashed_pw = hash_password(body.password)
+            cur.execute(
+                "INSERT INTO test_users (name, email, hashed_password) VALUES (%s, %s, %s) RETURNING id",
+                (body.name, body.email, hashed_pw),
+            )
+            result = cur.fetchone()
+            if not result:
+                raise HTTPException(status_code=500, detail="Failed to create user")
+            user_id = result[0]
+            conn.commit()
+            return User(id=user_id, name=body.name, email=body.email)
 
 @router.post("/auth/login", response_model=Token)
-def login(body: LoginInput, response: Response) -> Token:
+async def login(body: LoginInput, response: Response) -> Token:
     """Login and get JWT token."""
-    conn = psycopg2.connect(CONNINFO)
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT id, name, email, hashed_password FROM test_users WHERE email = %s",
-            (body.email,),
-        )
-        row = cur.fetchone()
-        if not row or not verify_password(body.password, row[3]):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+    async with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, name, email, hashed_password FROM test_users WHERE email = %s",
+                (body.email,),
+            )
+            row = cur.fetchone()
+            if not row or not verify_password(body.password, row[3]):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
 
-        token = create_access_token(subject=row[0])
-        
-        # Set cookie
-        response.set_cookie(
-            key=COOKIE_NAME,
-            value=token,
-            httponly=True,
-            samesite="lax",
-            secure=False,
-            max_age=60 * 15,
-        )
-        return Token(access_token=token)
-    finally:
-        conn.close()
+            token = create_access_token(subject=row[0])
+            
+            # Set cookie
+            response.set_cookie(
+                key=COOKIE_NAME,
+                value=token,
+                httponly=True,
+                samesite="lax",
+                secure=False,
+                max_age=60 * 15,
+            )
+            return Token(access_token=token)
 
 @router.get("/auth/me", response_model=User)
 def me(user: User = Depends(get_current_user)) -> User:
